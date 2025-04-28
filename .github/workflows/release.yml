@@ -42,8 +42,10 @@ jobs:
           export GOOS=linux
           export GOARCH=amd64
           export CGO_ENABLED=1
-          # *** Use NEW tool path and REMOVE -arch flag ***
-          go run fyne.io/tools/cmd/fyne@latest package -os linux -name fyne-sudoku-linux-amd64 -icon Icon.png
+          # Build command (creates .tar.xz by default)
+          go run fyne.io/tools/cmd/fyne@latest package -os linux -name fyne-sudoku-linux-amd64
+          echo "--- Listing files after Linux build ---"
+          ls -l
         env:
           GO111MODULE: on
 
@@ -53,8 +55,10 @@ jobs:
           export GOOS=darwin
           export GOARCH=amd64 # GOARCH still needed for Go build process
           export CGO_ENABLED=1
-          # *** Use NEW tool path and REMOVE -arch flag ***
-          go run fyne.io/tools/cmd/fyne@latest package -os darwin -name fyne-sudoku-macos-amd64 -icon Icon.png
+          # Build command (creates .app bundle)
+          go run fyne.io/tools/cmd/fyne@latest package -os darwin -name fyne-sudoku-macos-amd64
+          echo "--- Listing files after macOS build ---"
+          ls -l
           # Zip the .app bundle for release artifact
           zip -r fyne-sudoku-macos-amd64.zip fyne-sudoku-macos-amd64.app
         env:
@@ -69,8 +73,10 @@ jobs:
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
           $env:CGO_ENABLED = "1"
-          # *** Use NEW tool path and REMOVE -arch flag ***
-          go run fyne.io/tools/cmd/fyne@latest package -os windows -name fyne-sudoku-windows-amd64.exe -icon Icon.png
+          # Build command (creates .exe)
+          go run fyne.io/tools/cmd/fyne@latest package -os windows -name fyne-sudoku-windows-amd64.exe
+          Write-Host "--- Listing files after Windows build ---"
+          ls
         env:
           GO111MODULE: on
           # CC: gcc
@@ -80,8 +86,9 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: fyne-sudoku-linux-amd64
-          path: fyne-sudoku-linux-amd64
+          name: fyne-sudoku-linux-amd64 # Artifact name can remain the same
+          # *** Correct path to the generated archive ***
+          path: fyne-sudoku-linux-amd64.tar.xz
 
       - name: Upload macOS Artifact
         if: runner.os == 'MacOS'
@@ -117,9 +124,10 @@ jobs:
           name: Release ${{ github.ref_name }}
           body: |
             Sudoku Generator release ${{ github.ref_name }}
-            Binaries for Linux, macOS, and Windows.
+            Binaries for Linux (.tar.xz), macOS (.zip), and Windows (.exe).
           files: |
-            artifacts/fyne-sudoku-linux-amd64/fyne-sudoku-linux-amd64
+            # *** Correct path for the downloaded Linux artifact ***
+            artifacts/fyne-sudoku-linux-amd64/fyne-sudoku-linux-amd64.tar.xz
             artifacts/fyne-sudoku-macos-amd64.zip/fyne-sudoku-macos-amd64.zip
             artifacts/fyne-sudoku-windows-amd64.exe/fyne-sudoku-windows-amd64.exe
         env:
