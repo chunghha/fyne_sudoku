@@ -1,0 +1,142 @@
+name: Build and Release Fyne App
+
+# Run only when a tag matching v*.*.* (e.g., v0.1.0, v1.2.3) is pushed
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+# Permissions needed to create releases and upload assets
+permissions:
+  contents: write
+
+jobs:
+  # Job to build the application for different platforms
+  build:
+    strategy:
+      matrix:
+        # Define the platforms to build for
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Define Go version (ensure it's 1.21+ for min/max)
+        go-version: ["1.21"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      # --- Install OS-specific dependencies ---
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev
+
+      - name: Install Windows dependencies (MinGW for C compiler)
+        if: runner.os == 'Windows'
+        run: choco install mingw --no-progress # Using Chocolatey package manager
+
+      # --- Build using fyne package ---
+      - name: Set Env Vars and Build (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          export GOOS=linux
+          export GOARCH=amd64
+          export CGO_ENABLED=1 # Ensure CGO is enabled for Fyne
+          go install fyne.io/fyne/v2/cmd/fyne@latest # Install fyne command
+          fyne package -os linux -arch amd64 -name fyne-sudoku-linux-amd64 -icon Icon.png # Assumes Icon.png exists
+        env:
+          GO111MODULE: on
+
+      - name: Set Env Vars and Build (macOS)
+        if: runner.os == 'MacOS'
+        run: |
+          export GOOS=darwin
+          export GOARCH=amd64 # Or arm64 if targeting Apple Silicon specifically
+          export CGO_ENABLED=1
+          go install fyne.io/fyne/v2/cmd/fyne@latest
+          # Build .app bundle
+          fyne package -os darwin -arch amd64 -name fyne-sudoku-macos-amd64 -icon Icon.png
+          # Zip the .app bundle for release artifact
+          zip -r fyne-sudoku-macos-amd64.zip fyne-sudoku-macos-amd64.app
+        env:
+          GO111MODULE: on
+
+      - name: Set Env Vars and Build (Windows)
+        if: runner.os == 'Windows'
+        # Ensure MinGW is in PATH (adjust path if choco installs elsewhere)
+        # Common paths: C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin or C:\tools\mingw64\bin
+        # Using PowerShell syntax to add to PATH for this step
+        run: |
+          $env:Path += ";C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "1"
+          go install fyne.io/fyne/v2/cmd/fyne@latest
+          fyne package -os windows -arch amd64 -name fyne-sudoku-windows-amd64.exe -icon Icon.png
+        env:
+          GO111MODULE: on
+          # CC: gcc # Might be needed if Go doesn't find gcc automatically
+
+      # --- Upload Artifacts ---
+      # Upload each built binary/archive as an artifact associated with the build job
+      # This allows the 'release' job below to download them all.
+      - name: Upload Linux Artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fyne-sudoku-linux-amd64
+          path: fyne-sudoku-linux-amd64
+
+      - name: Upload macOS Artifact
+        if: runner.os == 'MacOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fyne-sudoku-macos-amd64.zip
+          path: fyne-sudoku-macos-amd64.zip
+
+      - name: Upload Windows Artifact
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fyne-sudoku-windows-amd64.exe
+          path: fyne-sudoku-windows-amd64.exe
+
+  # Job to create the GitHub Release and upload build artifacts
+  release:
+    # This job depends on the 'build' job completing successfully for all matrix variations
+    needs: build
+    runs-on: ubuntu-latest # Can run on any OS, Ubuntu is common for release steps
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        # No 'name' specified downloads all artifacts from the workflow run
+        # They will be placed in directories named after the artifact name
+        with:
+          path: artifacts # Download artifacts into an 'artifacts' directory
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Use the tag name (e.g., v0.1.0) for the release name and tag
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ github.ref_name }}
+          # Optional: Add release notes (can be empty, generated, or from a file)
+          body: |
+            Sudoku Generator release ${{ github.ref_name }}
+            Binaries for Linux, macOS, and Windows.
+          # Upload all files from the artifact directories
+          files: |
+            artifacts/fyne-sudoku-linux-amd64/fyne-sudoku-linux-amd64
+            artifacts/fyne-sudoku-macos-amd64.zip/fyne-sudoku-macos-amd64.zip
+            artifacts/fyne-sudoku-windows-amd64.exe/fyne-sudoku-windows-amd64.exe
+        env:
+          # GITHUB_TOKEN is automatically provided by GitHub Actions
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
