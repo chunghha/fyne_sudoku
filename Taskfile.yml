@@ -1,0 +1,43 @@
+version: '3'
+env:
+  PGM_NAME: fyne-sudoku
+tasks:
+  build:
+    cmds:
+      - task typo
+      - task format
+      - task lint
+      - go build -o $PGM_NAME
+  format:
+    cmds:
+      - go fmt
+  install:
+    cmds:
+      - task build
+      - cp $PGM_NAME ~/bin/
+  lint:
+    cmds:
+      - golangci-lint run -v
+  loc:
+    cmds:
+      - tokei . --exclude vendor
+  run:
+    cmds:
+      - if [ ! -f $PGM_NAME ]; then task build; fi
+      - ./$PGM_NAME
+  run:debug:
+    cmds:
+      - if [ ! -f $PGM_NAME ]; then task build; fi
+      - ./$PGM_NAME --debug=true
+  test:
+    cmds:
+      - go test -v ./...
+  tidy:
+    cmds:
+      - go mod tidy
+  typo:
+    cmds:
+      - typos *.go
+  typo:fix:
+    cmds:
+      - typos -w *.go
