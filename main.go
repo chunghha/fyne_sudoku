@@ -8,15 +8,15 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/data/validation"
+
+	// "fyne.io/fyne/v2/data/validation" // No longer needed
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme" // Required for theme elements
 	"fyne.io/fyne/v2/widget"
 )
 
-// --- Custom Theme Definition ---
+// --- Custom Theme Definition (Simplified) ---
 type myTheme struct{ fyne.Theme }
 
 var _ fyne.Theme = (*myTheme)(nil)
@@ -29,8 +29,9 @@ func (m *myTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) col
 	case theme.ColorNameForeground:
 		return color.Black // Force black text for enabled widgets
 	case theme.ColorNameDisabled:
-		return color.NRGBA{R: 80, G: 80, B: 80, A: 255} // Force dark grey for disabled text
-	// Make Input Border, Background, and Focus visuals transparent
+		// Use a visible color for disabled text in our light theme
+		return color.NRGBA{R: 80, G: 80, B: 80, A: 255} // Dark Grey
+	// Keep Input Border, Background, and Focus visuals transparent
 	case theme.ColorNameInputBorder, theme.ColorNameInputBackground, theme.ColorNameFocus:
 		return color.Transparent
 	default:
@@ -47,14 +48,15 @@ func (m *myTheme) Size(name fyne.ThemeSizeName) float32       { return theme.Def
 // Global variables
 var currentPuzzle [gridSize][gridSize]int
 var currentSolution [gridSize][gridSize]int
-var entryWidgets [gridSize][gridSize]*widget.Entry
-var backgroundRects [gridSize][gridSize]*canvas.Rectangle
+var cellWidgets [gridSize][gridSize]*sudokuCell // Holds custom cell widgets
 
 // Define colors
-var colorBlock1 color.Color
-var colorBlock2 color.Color
-var colorCorrect = color.NRGBA{R: 180, G: 255, B: 180, A: 255}   // Light Green
-var colorIncorrect = color.NRGBA{R: 255, G: 180, B: 180, A: 255} // Light Red
+var baseGray = color.NRGBA{R: 235, G: 235, B: 235, A: 255} // Custom light grey
+var colorBlock1 color.Color                                // Will be set to baseGray
+var colorBlock2 color.Color                                // Will be offset from baseGray
+// Define colors for TEXT feedback
+var colorTextCorrect = color.NRGBA{R: 0, G: 150, B: 0, A: 255}   // Dark Green
+var colorTextIncorrect = color.NRGBA{R: 200, G: 0, B: 0, A: 255} // Dark Red
 
 // Helper function to slightly adjust a color
 func offsetColor(c color.Color, offset int) color.Color {
@@ -80,40 +82,35 @@ func main() {
 	myWindow := myApp.NewWindow("Sudoku Generator")
 	myWindow.Resize(fyne.NewSize(500, 700)) // Keep user's preferred size
 
-	// Calculate Colors based on the Applied Theme
-	currentTheme := myApp.Settings().Theme()
-	colorBlock1 = currentTheme.Color(theme.ColorNameBackground, theme.VariantLight)
-	colorBlock2 = offsetColor(colorBlock1, -15)
+	// Calculate Colors
+	colorBlock1 = baseGray
+	colorBlock2 = offsetColor(colorBlock1, -20) // Adjust offset as needed for contrast
 
-	// --- Sudoku Grid UI (using range) ---
+	// --- Sudoku Grid UI (using custom widget) ---
 	gridContainer := container.NewGridWithColumns(gridSize)
-	for r := range entryWidgets {
-		for c := range entryWidgets[r] {
+	for r := range cellWidgets {
+		for c := range cellWidgets[r] {
+			// Need indices for closure
+			row, col := r, c
+
+			cell := NewSudokuCell()
+			// Set initial background (will be updated in updateGridUI)
 			blockRow, blockCol := r/boxSize, c/boxSize
-			var bgColor color.Color
 			if (blockRow+blockCol)%2 == 0 {
-				bgColor = colorBlock1
+				cell.SetBackgroundColor(colorBlock1)
 			} else {
-				bgColor = colorBlock2
+				cell.SetBackgroundColor(colorBlock2)
 			}
 
-			rect := canvas.NewRectangle(bgColor)
-			backgroundRects[r][c] = rect
+			// Set callback to handle focus request
+			cell.onTapped = func() {
+				if myWindow.Canvas() != nil {
+					myWindow.Canvas().Focus(cellWidgets[row][col]) // Focus the tapped cell
+				}
+			}
 
-			entry := widget.NewEntry()
-			entry.Validator = validation.NewRegexp(`^[1-9]?$`, "Must be 1-9 or empty")
-			entry.PlaceHolder = ""
-			// entry.TextAlign = fyne.TextAlignCenter // Keep commented out to avoid build errors
-			entry.TextStyle = fyne.TextStyle{}
-
-			entryWidgets[r][c] = entry
-
-			// *** USE container.NewCenter as requested ***
-			centeredEntry := container.NewCenter(entry)
-
-			// Stack the background and the centered entry
-			cellWidget := container.NewStack(rect, centeredEntry)
-			gridContainer.Add(cellWidget)
+			cellWidgets[r][c] = cell // Store the custom cell widget
+			gridContainer.Add(cell)  // Add the cell directly
 		}
 	}
 
@@ -147,20 +144,22 @@ func loadNewPuzzle(a fyne.App, difficulty int, win fyne.Window) {
 	updateGridUI(a, win)
 }
 
-// updateGridUI - Resets background colors and validation state
+// updateGridUI - Updates custom cell widgets, sets default text color
 func updateGridUI(a fyne.App, win fyne.Window) {
 	currentTheme := a.Settings().Theme()
-	colorBlock1 = currentTheme.Color(theme.ColorNameBackground, theme.VariantLight)
-	colorBlock2 = offsetColor(colorBlock1, -15)
+	colorBlock1 = baseGray
+	colorBlock2 = offsetColor(colorBlock1, -20)
+	// Get default text colors from theme
+	defaultFgColor := currentTheme.Color(theme.ColorNameForeground, theme.VariantLight)
+	defaultDisColor := currentTheme.Color(theme.ColorNameDisabled, theme.VariantLight)
 
-	for r, rowWidgets := range entryWidgets {
-		for c, entry := range rowWidgets {
-			rect := backgroundRects[r][c]
-			if entry == nil || rect == nil {
+	for r, rowCells := range cellWidgets {
+		for c, cell := range rowCells {
+			if cell == nil {
 				continue
 			}
 
-			// Reset background color
+			// Set background color
 			blockRow, blockCol := r/boxSize, c/boxSize
 			var bgColor color.Color
 			if (blockRow+blockCol)%2 == 0 {
@@ -168,84 +167,76 @@ func updateGridUI(a fyne.App, win fyne.Window) {
 			} else {
 				bgColor = colorBlock2
 			}
-			rect.FillColor = bgColor
-			rect.Refresh()
-
-			// Clear any previous validation state (icon/outline)
-			_ = entry.Validate()
+			cell.SetBackgroundColor(bgColor)
 
 			if currentPuzzle[r][c] != 0 { // Given number
-				entry.SetText(strconv.Itoa(currentPuzzle[r][c]))
-				entry.TextStyle = fyne.TextStyle{Bold: true}
-				entry.Disable()
+				cell.SetText(strconv.Itoa(currentPuzzle[r][c]))
+				cell.SetStyle(fyne.TextStyle{})    // Let renderer handle bold
+				cell.SetTextColor(defaultDisColor) // Set disabled text color
+				cell.Disable()
 			} else { // Empty cell
-				entry.SetText("")
-				entry.TextStyle = fyne.TextStyle{}
-				entry.Enable()
+				cell.SetText("")
+				cell.SetStyle(fyne.TextStyle{})   // Let renderer handle bold
+				cell.SetTextColor(defaultFgColor) // Set default foreground text color
+				cell.Enable()
 			}
 		}
 	}
 	if win.Canvas() != nil {
 		win.Canvas().Focus(nil)
-	}
+	} // Unfocus on new puzzle
 }
 
-// checkSolution - Applies color feedback ONLY via background
+// checkSolution - Applies TEXT color feedback
 func checkSolution(a fyne.App, win fyne.Window) {
 	correct := true
 	complete := true
-	var firstErrorEntry fyne.Focusable
+	var firstErrorCell fyne.Focusable
 
-	// Recalculate base colors needed for reset
+	// Get default text colors from theme
 	currentTheme := a.Settings().Theme()
-	colorBlock1 = currentTheme.Color(theme.ColorNameBackground, theme.VariantLight)
-	colorBlock2 = offsetColor(colorBlock1, -15)
+	defaultFgColor := currentTheme.Color(theme.ColorNameForeground, theme.VariantLight)
+	defaultDisColor := currentTheme.Color(theme.ColorNameDisabled, theme.VariantLight)
 
-	// Reset all background colors and clear entry validation icons before checking
-	for r, rowRects := range backgroundRects {
-		for c, rect := range rowRects {
-			if rect == nil {
+	// Reset TEXT colors before checking
+	// *** CORRECTED LOOP: Use blank identifiers ***
+	for _, rowCells := range cellWidgets {
+		for _, cell := range rowCells {
+			if cell == nil {
 				continue
 			}
-			// Reset background
-			blockRow, blockCol := r/boxSize, c/boxSize
-			if (blockRow+blockCol)%2 == 0 {
-				rect.FillColor = colorBlock1
+			// Reset text color based on disabled state
+			if cell.Disabled() {
+				cell.SetTextColor(defaultDisColor)
 			} else {
-				rect.FillColor = colorBlock2
+				cell.SetTextColor(defaultFgColor)
 			}
-			rect.Refresh()
-			// Clear entry's visual validation state
-			if entryWidgets[r][c] != nil {
-				_ = entryWidgets[r][c].Validate()
-			}
+			// Background reset is handled by updateGridUI or showSolution
 		}
 	}
 
-	// Check entries and apply feedback colors to background
-	for r, rowWidgets := range entryWidgets {
-		for c, entry := range rowWidgets {
-			rect := backgroundRects[r][c] // Get corresponding rect
-			if entry == nil || rect == nil {
+	// Check cells and apply feedback TEXT colors
+	for r, rowCells := range cellWidgets {
+		for c, cell := range rowCells {
+			if cell == nil {
 				continue
 			}
-			// DO NOT call entry.Validate() here - we use background color instead
 
-			if !entry.Disabled() { // Check user-editable cells
-				valStr := entry.Text
+			if !cell.Disabled() { // Check user-editable cells
+				valStr := cell.text // Access internal text directly for check
 				if valStr == "" {
 					complete = false
-					// Keep default background for empty cells (already reset above)
+					cell.SetTextColor(defaultFgColor) // Ensure empty cells have default color
 					continue
 				}
 
 				val, err := strconv.Atoi(valStr)
+				// Basic validation
 				if err != nil || val < 1 || val > 9 {
 					// Invalid input
-					rect.FillColor = colorIncorrect // Set background to Red
-					rect.Refresh()
-					if firstErrorEntry == nil {
-						firstErrorEntry = entry
+					cell.SetTextColor(colorTextIncorrect) // Set text to Red
+					if firstErrorCell == nil {
+						firstErrorCell = cell
 					}
 					correct, complete = false, false
 					continue
@@ -254,16 +245,14 @@ func checkSolution(a fyne.App, win fyne.Window) {
 				// Valid input, check against solution
 				if val != currentSolution[r][c] {
 					// Incorrect number
-					rect.FillColor = colorIncorrect // Set background to Red
-					rect.Refresh()
-					if firstErrorEntry == nil {
-						firstErrorEntry = entry
+					cell.SetTextColor(colorTextIncorrect) // Set text to Red
+					if firstErrorCell == nil {
+						firstErrorCell = cell
 					}
 					correct = false
 				} else {
 					// Correct number
-					rect.FillColor = colorCorrect // Set background to Green
-					rect.Refresh()
+					cell.SetTextColor(colorTextCorrect) // Set text to Green
 				}
 			}
 		}
@@ -273,62 +262,62 @@ func checkSolution(a fyne.App, win fyne.Window) {
 	if !complete && correct {
 		dialog.ShowInformation("Check Result", "The puzzle is not yet complete.", win)
 	} else if !correct {
-		dialog.ShowError(fmt.Errorf("incorrect solution - check colored cells"), win)
-		if firstErrorEntry != nil && win.Canvas() != nil {
-			win.Canvas().Focus(firstErrorEntry)
+		dialog.ShowError(fmt.Errorf("incorrect solution - check colored text"), win) // Updated message
+		if firstErrorCell != nil && win.Canvas() != nil {
+			win.Canvas().Focus(firstErrorCell)
 		}
 	} else { // complete and correct
 		dialog.ShowInformation("Check Result", "Congratulations! The solution is correct!", win)
 		// Optionally disable all on success
-		for _, rowWidgets := range entryWidgets {
-			for _, entry := range rowWidgets {
-				if entry != nil {
-					entry.Disable()
+		for _, rowCells := range cellWidgets {
+			for _, cell := range rowCells {
+				if cell != nil {
+					cell.Disable()
 				}
 			}
 		}
 	}
 }
 
-// showSolution - Resets background colors and validation state
+// showSolution - Updates custom cells, sets text color
 func showSolution(a fyne.App, win fyne.Window) {
+	// Recalculate colors
+	colorBlock1 = baseGray
+	colorBlock2 = offsetColor(colorBlock1, -20)
 	currentTheme := a.Settings().Theme()
-	colorBlock1 = currentTheme.Color(theme.ColorNameBackground, theme.VariantLight)
-	colorBlock2 = offsetColor(colorBlock1, -15)
+	defaultDisColor := currentTheme.Color(theme.ColorNameDisabled, theme.VariantLight)
 
-	for r, rowWidgets := range entryWidgets {
-		for c, entry := range rowWidgets {
-			rect := backgroundRects[r][c]
-			if entry == nil || rect == nil {
+	for r, rowCells := range cellWidgets {
+		for c, cell := range rowCells {
+			if cell == nil {
 				continue
 			}
 
 			// Reset background color
 			blockRow, blockCol := r/boxSize, c/boxSize
 			if (blockRow+blockCol)%2 == 0 {
-				rect.FillColor = colorBlock1
+				cell.SetBackgroundColor(colorBlock1)
 			} else {
-				rect.FillColor = colorBlock2
+				cell.SetBackgroundColor(colorBlock2)
 			}
-			rect.Refresh()
 
-			// Clear any previous validation state (icon/outline)
-			_ = entry.Validate()
-
-			isUserEditable := !entry.Disabled()
-			userValue := entry.Text
+			isUserEditable := !cell.Disabled()
+			userValue := cell.text // Access internal text
 			correctValueStr := strconv.Itoa(currentSolution[r][c])
 
+			// Set default disabled color first
+			cell.SetTextColor(defaultDisColor)
+
 			if isUserEditable && userValue != correctValueStr { // Revealed number
-				entry.SetText(correctValueStr)
-				entry.TextStyle = fyne.TextStyle{Italic: true}
-				entry.Disable()
+				cell.SetText(correctValueStr)
+				cell.SetStyle(fyne.TextStyle{Italic: true}) // Renderer handles bold
+				cell.Disable()
 			} else if !isUserEditable { // Pre-filled puzzle number
-				entry.TextStyle = fyne.TextStyle{Bold: true}
-				entry.Disable()
+				cell.SetStyle(fyne.TextStyle{}) // Renderer handles bold
+				cell.Disable()                  // Ensure disabled
 			} else { // User entered correct number
-				entry.TextStyle = fyne.TextStyle{}
-				entry.Disable()
+				cell.SetStyle(fyne.TextStyle{}) // Renderer handles bold
+				cell.Disable()
 			}
 		}
 	}
