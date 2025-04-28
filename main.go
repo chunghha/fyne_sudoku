@@ -15,7 +15,7 @@ import (
 )
 
 // --- Application Version ---
-const version = "v0.1.0"
+const version = "v0.1.1"
 
 // --- Custom Theme Definition ---
 type myTheme struct{ fyne.Theme }
