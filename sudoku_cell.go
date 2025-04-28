@@ -3,6 +3,7 @@ package main
 
 import (
 	"image/color"
+	"strconv"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -11,18 +12,22 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+// Define font size increase relative to theme default
+const fontSizeIncrease float32 = 4.0
+
 // sudokuCell represents a single interactive cell in the Sudoku grid.
 type sudokuCell struct {
 	widget.BaseWidget
 
-	text      string
-	style     fyne.TextStyle
-	bgColor   color.Color
-	textColor color.Color // Added field for text color control
-	disabled  bool
-	focused   bool
+	text             string
+	style            fyne.TextStyle
+	bgColor          color.Color
+	textColor        color.Color // Current text color (can be feedback color)
+	defaultTextColor color.Color // Color when not showing feedback
+	solutionValue    int         // Correct value for this cell
+	disabled         bool
+	focused          bool
 
-	// Callbacks
 	onChanged func(string)
 	onTapped  func()
 }
@@ -31,36 +36,21 @@ type sudokuCell struct {
 func NewSudokuCell() *sudokuCell {
 	cell := &sudokuCell{}
 	cell.ExtendBaseWidget(cell)
-	// Initialize text color (will be overridden by theme/logic later)
-	cell.textColor = color.Black
+	cell.textColor = color.Black // Initial default
+	cell.defaultTextColor = color.Black
 	return cell
 }
 
 // --- Widget Interface ---
 
-// CreateRenderer is required by the Widget interface.
 func (c *sudokuCell) CreateRenderer() fyne.WidgetRenderer {
-	// Get the current theme instance
 	currentTheme := fyne.CurrentApp().Settings().Theme()
-	// Use the THEME METHOD with NAME and VARIANT
-	// Use widget's textColor field for initial color if needed, or theme default
-	// Let's use the theme default initially, it will be set correctly by updateGridUI
 	initialTextColor := currentTheme.Color(theme.ColorNameForeground, theme.VariantLight)
 
-	text := canvas.NewText(c.text, initialTextColor) // Use initial color
+	text := canvas.NewText(c.text, initialTextColor)
 	text.Alignment = fyne.TextAlignCenter
-	// Default to Bold
-	text.TextStyle = fyne.TextStyle{Bold: true}
-	// Apply specific style if set
-	if c.style.Bold || c.style.Italic || c.style.Monospace || c.style.Symbol || c.style.TabWidth > 0 {
-		text.TextStyle = c.style
-		// Ensure bold is always true unless explicitly overridden? Or combine?
-		if c.style.Italic {
-			text.TextStyle.Bold = true // Make revealed text bold italic
-		} else {
-			text.TextStyle.Bold = true // Ensure non-italic is bold
-		}
-	}
+	text.TextSize = theme.TextSize() + fontSizeIncrease // Increased font size
+	text.TextStyle = fyne.TextStyle{Bold: true}         // Always bold
 
 	rect := canvas.NewRectangle(c.bgColor)
 
@@ -70,11 +60,11 @@ func (c *sudokuCell) CreateRenderer() fyne.WidgetRenderer {
 		text:       text,
 		objects:    []fyne.CanvasObject{rect, text},
 	}
-	renderer.Refresh() // Initial refresh
+	renderer.Refresh()
 	return renderer
 }
 
-// --- Interaction --- (Code remains the same)
+// --- Interaction ---
 func (c *sudokuCell) Tapped(*fyne.PointEvent) {
 	if !c.disabled && c.onTapped != nil {
 		c.onTapped()
@@ -87,18 +77,30 @@ func (c *sudokuCell) FocusGained() {
 	}
 }
 func (c *sudokuCell) FocusLost() { c.focused = false; c.Refresh() }
+
 func (c *sudokuCell) TypedRune(r rune) {
 	if c.disabled || !c.focused {
 		return
 	}
 	if r >= '1' && r <= '9' {
 		c.text = string(r)
+		typedValue, err := strconv.Atoi(c.text)
+		if err == nil && c.solutionValue != 0 {
+			if typedValue == c.solutionValue {
+				c.SetTextColor(colorTextCorrect)
+			} else {
+				c.SetTextColor(colorTextIncorrect)
+			}
+		} else {
+			c.SetTextColor(c.defaultTextColor)
+		} // Fallback
 		c.Refresh()
 		if c.onChanged != nil {
 			c.onChanged(c.text)
 		}
 	}
 }
+
 func (c *sudokuCell) TypedKey(key *fyne.KeyEvent) {
 	if c.disabled || !c.focused {
 		return
@@ -107,6 +109,7 @@ func (c *sudokuCell) TypedKey(key *fyne.KeyEvent) {
 	case fyne.KeyBackspace, fyne.KeyDelete:
 		if c.text != "" {
 			c.text = ""
+			c.SetTextColor(c.defaultTextColor) // Reset color
 			c.Refresh()
 			if c.onChanged != nil {
 				c.onChanged(c.text)
@@ -124,7 +127,7 @@ func (c *sudokuCell) MouseDown(*desktop.MouseEvent) {
 	}
 }
 
-// --- Disableable interface --- (Code remains the same)
+// --- Disableable interface ---
 func (c *sudokuCell) Enable()        { c.disabled = false; c.Refresh() }
 func (c *sudokuCell) Disable()       { c.disabled = true; c.Refresh() }
 func (c *sudokuCell) Disabled() bool { return c.disabled }
@@ -137,12 +140,7 @@ func (c *sudokuCell) SetText(text string) {
 	}
 }
 func (c *sudokuCell) SetStyle(style fyne.TextStyle) {
-	// Ensure Bold is maintained or added correctly
-	if style.Italic {
-		style.Bold = true // Make italic also bold
-	} else {
-		style.Bold = true // Ensure non-italic is bold
-	}
+	style.Bold = true // Always bold
 	if c.style != style {
 		c.style = style
 		c.Refresh()
@@ -154,14 +152,14 @@ func (c *sudokuCell) SetBackgroundColor(bgColor color.Color) {
 		c.Refresh()
 	}
 }
-
-// Add Setter for Text Color
 func (c *sudokuCell) SetTextColor(textColor color.Color) {
 	if c.textColor != textColor {
 		c.textColor = textColor
 		c.Refresh()
 	}
 }
+func (c *sudokuCell) SetDefaultTextColor(textColor color.Color) { c.defaultTextColor = textColor }
+func (c *sudokuCell) SetSolutionValue(value int)                { c.solutionValue = value }
 
 // --- Renderer ---
 type sudokuCellRenderer struct {
@@ -181,29 +179,15 @@ func (r *sudokuCellRenderer) MinSize() fyne.Size {
 	padding := theme.Padding() * 2
 	return fyne.NewSize(minTextSize.Width+padding, minTextSize.Height+padding)
 }
-
-// Refresh updates the visual elements based on the widget's state.
 func (r *sudokuCellRenderer) Refresh() {
-	// *** REMOVED unused currentTheme variable ***
-	// currentTheme := fyne.CurrentApp().Settings().Theme()
-
 	r.background.FillColor = r.widget.bgColor
 	r.text.Text = r.widget.text
-
-	// Ensure Bold style is applied correctly
-	currentStyle := r.widget.style
-	if currentStyle.Italic {
-		currentStyle.Bold = true // Italic should also be bold
-	} else {
-		currentStyle.Bold = true // Default to bold
+	r.text.TextSize = theme.TextSize() + fontSizeIncrease // Ensure size is correct
+	r.text.TextStyle = fyne.TextStyle{Bold: true}         // Always bold
+	if r.widget.style.Italic {                            // Apply italic if set
+		r.text.TextStyle.Italic = true
 	}
-	r.text.TextStyle = currentStyle
-
-	// *** Use the widget's textColor field ***
-	r.text.Color = r.widget.textColor
-
-	// Optional: Visual feedback for focus
-	// if r.widget.focused { ... }
+	r.text.Color = r.widget.textColor // Use the stored text color
 
 	r.background.Refresh()
 	r.text.Refresh()
